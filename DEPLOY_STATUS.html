@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>三个 Telegram 机器人 - 部署状态</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; background: #f5f5f5; }
+h1 { color: #333; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 14px; font-weight: 500; }
+.ok { background: #d4edda; color: #155724; }
+.wait { background: #fff3cd; color: #856404; }
+.err { background: #f8d7da; color: #721c24; }
+code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+pre { background: #2d2d2d; color: #eee; padding: 16px; border-radius: 8px; overflow-x: auto; }
+.step { background: #e8f4fd; border-left: 4px solid #0066cc; padding: 12px 16px; margin: 12px 0; border-radius: 0 8px 8px 0; }
+</style>
+</head>
+<body>
+<h1>🚀 三个 Telegram 机器人 - 部署状态</h1>
+
+<div class="card">
+  <h2>✅ 已完成的工作</h2>
+  <p>所有代码已成功推送到 GitHub：</p>
+  <ul>
+    <li><strong>truck-watch</strong> - 物流监控 (每5分钟检查Google表格)</li>
+    <li><strong>dealwatch</strong> - 市场机会监控 (监控WB/Ozon/Avito价格)</li>
+    <li><strong>tg-suite</strong> - FreeLLM Bot + Reminders Bot</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2>⚠️ Railway 连接问题</h2>
+  <p>Railway 没有显示你的项目，原因是 <strong>GitHub 授权未完成</strong>。</p>
+
+  <div class="step">
+    <strong>解决方法（2分钟）：</strong>
+    <ol>
+      <li>打开 <a href="https://railway.app" target="_blank">railway.app</a></li>
+      <li>点击右上角头像 → <strong>Account Settings</strong></li>
+      <li>点击 <strong>Integrations</strong> → <strong>GitHub</strong></li>
+      <li>点击 <strong>Connect</strong> 或 <strong>Authorize</strong></li>
+      <li>在 GitHub 页面选择账户 <code>dongano91-ship-it</code></li>
+      <li>选择 <strong>All repositories</strong>（或手动选这三个）</li>
+      <li>点击 <strong>Install & Authorize</strong></li>
+    </ol>
+  </div>
+
+  <p>完成后，点击 <strong>New Project</strong> → <strong>Deploy from GitHub repo</strong>，就能看到三个仓库了。</p>
+</div>
+
+<div class="card">
+  <h2>📋 下一步：获取必要信息</h2>
+
+  <h3>1. 创建 3 个 Telegram Bot</h3>
+  <p>在 Telegram 搜索 <strong>@BotFather</strong>，分别发送：</p>
+  <pre>/newbot
+选择名称: Truck Watch Bot
+选择username: truck_watch_bot_12345
+复制得到的 token
+
+/newbot
+选择名称: Deal Watch Bot
+...</pre>
+
+  <h3>2. 获取 Chat ID</h3>
+  <pre>python C:\Users\donga\OneDrive\Documents\deepseek-harness\default-workspace\get_chat_id.py &lt;TOKEN&gt;</pre>
+  <p>让每个接收者给 bot 发一条消息，就能得到 chat_id</p>
+</div>
+
+<div class="card">
+  <h2>🎯 三个项目的配置要求</h2>
+
+  <table border="1" cellpadding="8" style="border-collapse: collapse; width: 100%;">
+    <tr>
+      <th>项目</th>
+      <th>关键环境变量</th>
+      <th>备注</th>
+    </tr>
+    <tr>
+      <td><strong>truck-watch</strong></td>
+      <td>TGW_TELEGRAM_TOKEN<br>TGW_TELEGRAM_CHAT_IDS<br>TGW_SHEET_URL</td>
+      <td>已有完整配置</td>
+    </tr>
+    <tr>
+      <td><strong>dealwatch</strong></td>
+      <td>BOT_TOKEN<br>BOT_CHAT_IDS</td>
+      <td>需 Chrome 环境</td>
+    </tr>
+    <tr>
+      <td><strong>tg-suite</strong></td>
+      <td>FREE_LLM_BOT_TOKEN<br>FREE_LLM_API_URL<br>ADMIN_CHAT_IDS</td>
+      <td>需 ngrok 隧道</td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>💡 替代方案</h2>
+  <p>如果 Railway 授权困难，可以改用其他平台：</p>
+  <ul>
+    <li><strong>Render</strong> (render.com) - 有免费 tier，支持 Docker</li>
+    <li><strong>PythonAnywhere</strong> - 简单 Python 部署</li>
+    <li><strong>本地运行</strong> - 使用 Windows 任务计划程序自动启动</li>
+  </ul>
+</div>
+
+<p style="text-align: center; color: #666; margin-top: 40px;">
+  完成 Railway 授权后，回来告诉我，我会帮你完成后续配置！
+</p>
+</body>
+</html>
