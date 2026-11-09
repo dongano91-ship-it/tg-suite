@@ -1,0 +1,9 @@
+---
+# Railway configuration
+# Documentation: https://docs.railway.com/
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+numReplicas = 1

@@ -1,0 +1,10 @@
+# Environments & DBs
+.env
+*.db
+.venv/
+__pycache__/
+
+# Binaries & Tooling
+uv.zip
+uv-tools/
+*.exe
