@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Railway - Куда вводить</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; padding: 20px; }
+        .box { background: #16213e; border-radius: 10px; padding: 20px; margin: 15px 0; border-left: 4px solid #0f3460; }
+        h1 { color: #e94560; text-align: center; }
+        h2 { color: #53d8fb; }
+        code { background: #0f3460; padding: 3px 8px; border-radius: 4px; color: #ffd700; }
+        .arrow { color: #ffd700; font-size: 24px; text-align: center; margin: 20px 0; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { border: 1px solid #53d8fb; padding: 12px; text-align: left; }
+        th { background: #0f3460; color: #ffd700; }
+    </style>
+</head>
+<body>
+    <h1>🎯 Куда именно нажимать на Railway</h1>
+
+    <div class="box">
+        <h2>Шаг 1: Откройте Railway</h2>
+        <p>Перейдите по адресу:</p>
+        <code style="font-size: 18px;">https://railway.app</code>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Шаг 2: Вход через GitHub</h2>
+        <p>В правом верхнем углу нажмите кнопку:</p>
+        <code>Login with GitHub</code>
+        <p><em>(или "Sign In" → затем выберите GitHub)</em></p>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Шаг 3: Если видите "No projects found"</h2>
+        <p>Это значит нужно подключить GitHub:</p>
+        <ol>
+            <li>Кликните на вашу <strong>аватарку</strong> (справа вверху)</li>
+            <li>Выберите <code>Account Settings</code></li>
+            <li>В меню слева найдите <strong>Integrations</strong></li>
+            <li>Найдите блок <strong>GitHub</strong></li>
+            <li>Нажмите кнопку <code>Connect</code></li>
+        </ol>
+
+        <p>Далее откроется страница GitHub — там нужно:</p>
+        <ul>
+            <li>Выбрать аккаунт <code>dongano91-ship-it</code></li>
+            <li>Поставить галочку <strong>"All repositories"</strong></li>
+            <li>Нажать зеленую кнопку <code>Install & Authorize</code></li>
+        </ul>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Шаг 4: Создать проект</h2>
+        <p>Когда появится список проектов, нажмите кнопку:</p>
+        <code>+ New Project</code>
+        <p>Затем выберите:</p>
+        <code>Deploy from GitHub repo</code>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Шаг 5: Выбрать репозиторий</h2>
+        <p>В поиске наберите название проекта и кликните по нему:</p>
+        <table>
+            <tr>
+                <th>Бот</th>
+                <th>Что искать в списке</th>
+            </tr>
+            <tr>
+                <td>Truck Watch</td>
+                <td><code>truck-watch</code></td>
+            </tr>
+            <tr>
+                <td>DealWatch</td>
+                <td><code>dealwatch</code></td>
+            </tr>
+            <tr>
+                <td>FreeLLM Bot</td>
+                <td><code>tg-suite</code></td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Шаг 6: Добавить переменные (ВАЖНО!)</h2>
+        <p>Когда проект загрузится, в левом меню нажмите:</p>
+        <code>Variables</code>
+        <br><br>
+        <p>Затем нажмите кнопку:</p>
+        <code>+ Add Variable</code>
+        <br><br>
+        <p><strong>Для truck-watch введите:</strong></p>
+        <table>
+            <tr>
+                <th>Variable</th>
+                <th>Value</th>
+            </tr>
+            <tr>
+                <td><code>TGW_TELEGRAM_TOKEN</code></td>
+                <td>Ваш токен от @BotFather (когда создавали бота)</td>
+            </tr>
+            <tr>
+                <td><code>TGW_SHEET_URL</code></td>
+                <td><code>https://docs.google.com/spreadsheets/d/1GLkYhAZ094VIat3n2owKhvzykTAyPqqDDAeT5hdl1Fs/edit</code></td>
+            </tr>
+            <tr>
+                <td><code>TGW_PLATES</code></td>
+                <td><code>629,718,715,058,124</code></td>
+            </tr>
+        </table>
+
+        <p><em>Каждую строку добавляйте отдельно!</em></p>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Где взять токен бота?</h2>
+        <p>В Telegram найдите <strong>@BotFather</strong>, напишите ему:</p>
+        <pre>/newbot</pre>
+        <p>Придумайте имя (например: <code>TruckWatchBot</code>)</p>
+        <p>Придумайте username (должен оканчиваться на <code>bot</code>, например: <code>my_truck_bot_123</code>)</p>
+        <p><strong>Скопируйте полученный токен</strong> (выглядит как: <code>123456789:AAHxyz...</code>)</p>
+        <p>Вставьте его в поле <code>TGW_TELEGRAM_TOKEN</code> на Railway.</p>
+    </div>
+
+    <div class="box">
+        <h2>Как получить chat_id получателей?</h2>
+        <p>Запустите в PowerShell:</p>
+        <pre>cd C:\Users\donga\OneDrive\Documents\deepseek-harness\default-workspace
+python get_chat_id.py ВАШ_ТОКЕН</pre>
+        <p>Попросите каждого из 4 человек написать боту сообщение.</p>
+        <p>После этого скрипт покажет их ID — скопируйте их.</p>
+    </div>
+
+    <div class="arrow">⬇️</div>
+
+    <div class="box">
+        <h2>Шаг 7: Deploy!</h2>
+        <p>После добавления всех переменных нажмите кнопку:</p>
+        <code style="background: #238636; font-size: 18px;">Deploy</code>
+        <br><br>
+        <p>Подождите 1-2 минуты. Внизу появится вкладка <code>Logs</code> — там видно что происходит.</p>
+    </div>
+
+    <div style="text-align: center; margin-top: 30px;">
+        <p style="color: #8b949e;">Если возникают ошибки — опишите что пишется на экране, помогу!</p>
+    </div>
+</body>
+</html>
