@@ -1,9 +1,21 @@
----
-# Railway configuration
-# Documentation: https://docs.railway.com/
-
-[build]
-builder = "nixpacks"
-
-[deploy]
-numReplicas = 1
+{
+  "name": "tg-suite",
+  "regions": ["hnd"],
+  "buildCommand": "",
+  "startCommand": "python app/bot.py",
+  "healthcheckPath": "/",
+  "env": [
+    {
+      "key": "PYTHONUNBUFFERED",
+      "value": "1"
+    },
+    {
+      "key": "BOT_TOKEN",
+      "value": ""
+    },
+    {
+      "key": "FLASK_PORT",
+      "value": "20129"
+    }
+  ]
+}
