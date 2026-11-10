@@ -2,7 +2,6 @@ FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y \
     chromium \
-    chromium-sandbox \
     fonts-liberation \
     fonts-noto-cjk \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -14,17 +13,14 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    python -m playwright install chromium 2>/dev/null || true
 
 COPY app/ ./app/
 COPY Procfile .
 
-# Create Chrome profile dir with proper permissions
-RUN mkdir -p /app/.chrome-profile && chmod 777 /app/.chrome-profile
-
 ENV CHROME_BIN=/usr/bin/chromium
 ENV DEALWATCH_CHROME=/usr/bin/chromium
-ENV DISPLAY=:99
 ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "app/bot.py"]
