@@ -158,10 +158,28 @@ class PlaywrightChrome:
         """Запуск браузера."""
         try:
             from playwright.sync_api import sync_playwright
+
             self.playwright = sync_playwright().start()
 
+            # Ищем Chrome/Chromium executable path
+            chrome_paths = [
+                os.environ.get("CHROME_BIN", "/usr/bin/chromium"),
+                os.environ.get("DEALWATCH_CHROME", "/usr/bin/chromium"),
+                "/usr/bin/chromium-browser",
+                "/usr/bin/google-chrome",
+                "/usr/bin/google-chrome-stable",
+                os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome"),
+            ]
+            executable_path = None
+            for p in chrome_paths:
+                if os.path.exists(p):
+                    executable_path = p
+                    break
+
+            log.info(f"Chrome path: {executable_path}")
+
             # Запускаем Chrome в headless режиме
-            self.browser = self.playwright.chromium.launch(
+            launch_kwargs = dict(
                 headless=self.headless,
                 args=[
                     '--no-sandbox',
@@ -173,8 +191,18 @@ class PlaywrightChrome:
                     '--disable-webrtc',
                     '--window-size=1440,900',
                     '--lang=ru-RU',
+                    '--disable-extensions',
+                    '--disable-background-networking',
                 ]
             )
+            if executable_path and os.path.exists(executable_path):
+                launch_kwargs['executable_path'] = executable_path
+                log.info(f"Using custom Chrome at {executable_path}")
+            else:
+                # Fallback: используем встроенный Playwright chromium
+                log.info("Using Playwright's bundled Chromium")
+
+            self.browser = self.playwright.chromium.launch(**launch_kwargs)
 
             # Создаем контекст с прокси anti-detect
             self._context = self.browser.new_context(
