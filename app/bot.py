@@ -178,49 +178,70 @@ def scan_query_real(query: str, max_results: int = 5) -> tuple[list[dict], dict]
     return best, stats
 
 
-def format_offers_batch(offers: list[dict]) -> str:
-    """Форматирует результаты поиска в красивое сообщение."""
+def format_offers_batch(offers: list[dict]) -> tuple[str, list[str]]:
+    """
+    Форматирует результаты поиска в красивое сообщение с картинками.
+    Возвращает: (текст_сообщения, список_URL_картинок)
+    """
     if not offers:
-        return "😕 Ничего не найдено по этому запросу.\n\nПопробуйте другой запрос!"
+        return "😕 Ничего не найдено по этому запросу.\n\nПопробуйте другой запрос!", []
 
     lines = ["💰 <b>Лучшие цены на этот товар:</b>\n"]
+    images = []
 
-    for i, o in enumerate(offers[:8], 1):
+    for i, o in enumerate(offers[:6], 1):
         price_val = o.get('price', 0)
+        old_price = o.get('old_price', 0)
         discount = o.get('discount', 0)
 
-        # Форматирование цены
+        # Красивое форматирование цены
         if price_val:
             price_str = f"🏷 {int(price_val):,}".replace(",", " ") + " ₽"
-            if discount:
-                old_price = int(price_val / (1 - discount/100)) if discount < 100 else 0
-                if old_price > price_val:
-                    price_str += f" ~~{int(old_price):,}~~ ({discount}% скидка!)"
+            if old_price and old_price > price_val:
+                price_str += f" ~~{int(old_price):,}~~"
+            if discount >= 20:
+                price_str += f" 🔥-{discount}%!"
+            elif discount > 0:
+                price_str += f" ⚡-{discount}%"
         else:
             price_str = "—"
 
-        # Заголовок и платформа
-        title = o.get('title', 'Товар')[:55]
+        # Заголовок и описание
+        title = o.get('title', 'Товар')[:50]
         platform = o.get('platform', '')
-
-        # Причина (почему это хорошая сделка)
+        description = o.get('description', '')[:70]
         reason = o.get('reason', '')
-        reason_text = f"\n<i>{reason}</i>" if reason else ""
 
         # Ссылка
         url = o.get('url', '#')
-        link_text = "🔗 Перейти" if url and url != '#' else ""
+        is_search = o.get('is_search', False)
 
-        lines.append(f"<b>{i}. {title}</b>")
-        lines.append(f"{price_str} | 🏪 {platform}{reason_text}")
-        if link_text:
-            lines.append(f"<a href=\"{url}\">{link_text}</a>")
-        lines.append("")  # пустая строка между товарами
+        # Карточка товара
+        card = f"\n<b>{i}. {title}</b>"
+        if description:
+            card += f"\n<i>{description}</i>"
+        card += f"\n{price_str}"
+        if platform:
+            card += f" | 🏪 {platform}"
+        if reason:
+            card += f"\n✅ {reason}"
+        if url and not is_search:
+            card += f"\n<a href=\"{url}\">🔗 Смотреть на сайте →</a>"
+        elif url:
+            card += f"\n👉 <a href=\"{url}\">Перейти к поиску →</a>"
 
-    if len(offers) > 8:
-        lines.append(f"...и ещё {len(offers) - 8} предложений на площадках.")
+        lines.append(card)
 
-    return "\n".join(lines)
+        # Добавляем картинку если есть
+        if o.get('image'):
+            images.append(o['image'])
+
+    # Итоговая статистика
+    has_prices = len([o for o in offers if o.get('price', 0) > 0])
+    lines.append(f"\n📊 Всего: {len(offers)} предложений ({has_prices} с ценами)")
+
+    text = "\n".join(lines)
+    return text, images
 
 
 def format_offers_with_images(offers: list[dict]) -> tuple[str, list[str]]:
@@ -289,9 +310,22 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await reply.edit_text(f"😕 По запросу «{query}» ничего не найдено.\n\nПопробуйте другой запрос.")
             return
 
-        message = format_offers_batch(offers)
-        await reply.edit_text(message, parse_mode="HTML", disable_web_page_preview=True)
-        log.info(f"Scan '{query}': found {stats.get('count', 0)} offers")
+        # Check if we have images to send as carousel
+        formatted_text, images = format_offers_batch(offers)
+
+        # Отправляем текстовое сообщение первым
+        await reply.edit_text(formatted_text, parse_mode="HTML", disable_web_page_preview=True)
+
+        # Если есть картинки — отправляем их как фото-карусель
+        if images:
+            try:
+                for img_url in images[:6]:
+                    if img_url:
+                        await update.message.reply_photo(photo=img_url, caption="🖼 Фото товара")
+            except Exception as e:
+                log.debug(f"Image send failed: {e}")
+
+        log.info(f"Scan '{query}': found {stats.get('count', 0)} offers with {len(images)} images")
 
     except Exception as e:
         log.error(f"Scan failed: {e}")
