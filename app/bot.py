@@ -27,10 +27,19 @@ SCAN_INTERVAL_MINUTES = 60  # auto-scan every hour
 # DealWatch config
 DEALWATCH_CONFIG = os.path.join(os.path.dirname(__file__), "dealwatch_config.json")
 
-# Import DealWatch browser & sources
-from browser import Chrome, BrowserError  # noqa: E402
-from sources import search as source_search, SourceError, EXTRACT_JS  # noqa: E402
+# Import DealWatch via Playwright
+from playwright_browser import search_with_playwright, PlaywrightBrowserError  # noqa: E402
 import json  # noqa: E402
+
+
+def _load_dealwatch_config() -> dict:
+    """Load dealwatch config."""
+    try:
+        with open(DEALWATCH_CONFIG, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        log.error(f"Cannot load dealwatch config: {e}")
+        return {}
 
 
 def _db():
@@ -127,138 +136,42 @@ async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# Real DealWatch scanner
+# Real DealWatch scanner using Playwright
 # ============================================================
 
-def _load_dealwatch_config() -> dict:
-    """Загружает конфиг dealwatch."""
-    import json
-    try:
-        with open(DEALWATCH_CONFIG, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        log.error(f"Cannot load dealwatch config: {e}")
-        return {}
-
-
-def _find_best_offers(query: str, platforms=None, max_price=None, min_price=0) -> list[dict]:
-    """Ищет товары через браузер на маркетплейсах. Возвращает список лучших предложений."""
+def scan_query_real(query: str, max_results: int = 5) -> tuple[list[dict], dict]:
+    """Real product search across marketplaces using Playwright."""
     cfg = _load_dealwatch_config()
     if not cfg:
-        return []
+        return [], {"error": "Config not loaded"}
 
-    plat_list = platforms or [p for p in cfg.get("platforms", []) if p.get("enabled", True)]
-
-    offers_by_platform = {}
-    for platform_cfg in plat_list:
-        key = platform_cfg["key"]
-        name = platform_cfg["name"]
-        try:
-            offers = source_search(None, platform_cfg, query, limit=10)
-            # source_search возвращает (offers, diag), но первый аргумент должен быть page
-            # Исправим: нужен экземпляр Chrome и Page
-        except Exception as e:
-            log.warning(f"Platform {key} failed: {e}")
-            continue
-
-    return []
-
-
-# Используем упрощённый подход: создаём Chrome один раз и переиспользуем
-_chrome_instance = None
-
-
-def _get_chrome():
-    global _chrome_instance
-    if _chrome_instance is None:
-        chrome_cfg = _load_dealwatch_config().get("browser", {})
-        headless = chrome_cfg.get("headless", True)
-        port = chrome_cfg.get("port", 9222)
-        profile_dir = chrome_cfg.get("profile_dir", ".chrome-profile")
-
-        _chrome_instance = Chrome(
-            port=port,
-            profile_dir=profile_dir,
-            headless=headless,
-            verbose=False
-        )
-        try:
-            _chrome_instance.start()
-            log.info("Chrome started in headless mode")
-        except Exception as e:
-            log.error(f"Failed to start Chrome: {e}")
-            _chrome_instance = None
-    return _chrome_instance
-
-
-def scan_query_real(query: str, max_results: int = 5) -> tuple[list[dict], dict]:
-    """
-    Выполняет реальный поиск товаров по запросу.
-    Возвращает (offers, stats).
-    offer = {url, title, price, platform}
-    """
-    cfg = _load_dealwatch_config()
     platforms = [p for p in cfg.get("platforms", []) if p.get("enabled", True)]
 
     all_offers = []
-    errors = []
+    errors = {}
 
-    chrome = _get_chrome()
-    if not chrome:
-        return [], {"error": "Не удалось запустить Chrome"}
+    log.info(f"Starting search for '{query}' on {len(platforms)} platforms")
 
-    page = chrome.new_page()
-
-    for plat in platforms[:3]:  # Ограничим 3 платформами для скорости
+    for plat in platforms[:4]:
         try:
-            url = plat["url"].replace("{q}", query)
-            plat_name = plat["name"]
-
-            # Прогрев если нужен
-            warmup = plat.get("warmup")
-            if warmup:
-                try:
-                    page.goto(warmup, settle=1.5)
-                except Exception:
-                    pass
-
-            # Переход на поиск
-            page.goto(url, settle=plat.get("settle", 3))
-
-            # Скроллим
-            for _ in range(plat.get("scroll_steps", 3)):
-                try:
-                    page.evaluate("window.scrollBy(0, 800); 1")
-                except Exception:
-                    break
-
-            time.sleep(1)
-
-            # Извлечение JS из sources.py
-            from sources import EXTRACT_JS
-
-            extract_js = EXTRACT_JS.replace("__CFG__",
-                __import__('json').dumps({k: v for k, v in plat.items()
-                                         if k in ("mode", "selector", "link_sel", "title_sel",
-                                                  "title_sel_attr", "price_sel", "price_sel_attr",
-                                                  "id_attr", "id_re", "min_price")} + {"limit": max_results}))
-
-            raw = page.evaluate(extract_js)
-            if raw:
-                offers = __import__('json').loads(raw)
+            offers, plat_errors = search_with_playwright(plat, query, limit=max_results * 3)
+            if offers:
                 for o in offers:
-                    o["platform"] = plat_name
+                    o["platform"] = plat["name"]
                 all_offers.extend(offers)
-                log.info(f"{plat_name}: найдено {len(offers)} товаров")
+                log.info(f"{plat['name']}: found {len(offers)} items")
+
+            if plat_errors:
+                errors.update(plat_errors)
 
         except Exception as e:
-            errors.append(f"{plat['name']}: {e}")
+            errors[plat['key']] = str(e)[:80]
             log.warning(f"Platform {plat['key']} error: {e}")
 
-    page.close()
+        import time as _time
+        _time.sleep(1)
 
-    # Сортируем по цене и берем лучшие
-    all_offers.sort(key=lambda x: x.get("price", 0))
+    all_offers.sort(key=lambda x: x.get("price", 999999))
     best = all_offers[:max_results]
 
     stats = {"total_found": len(all_offers), "errors": errors}
@@ -266,7 +179,6 @@ def scan_query_real(query: str, max_results: int = 5) -> tuple[list[dict], dict]
 
 
 def format_offer(offer: dict) -> str:
-    """Форматирует одно предложение для отправки."""
     price = f"{int(offer['price']):,}".replace(",", " ") + " ₽"
     return (
         f"🛒 <b>{offer.get('platform', '?')}</b>\n"
@@ -276,7 +188,6 @@ def format_offer(offer: dict) -> str:
 
 
 def format_offers_batch(offers: list[dict]) -> str:
-    """Форматирует пачку предложений одним сообщением."""
     if not offers:
         return "😕 Ничего не найдено по этому запросу."
 
@@ -288,18 +199,18 @@ def format_offers_batch(offers: list[dict]) -> str:
             f"→ <a href=\"{o['url']}\">Ссылка</a>"
         )
         if i >= 5:
-            lines.append(f"\n...и ещё {len(offers) - 5} предложений. Запросите конкретный товар!")
+            lines.append(f"\n...и ещё {len(offers) - 5} предложений.")
             break
 
     return "\n\n".join(lines)
 
 
 # ============================================================
-# Bot commands with real scanning
+# Bot commands
 # ============================================================
 
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Реальный поиск товаров на маркетплейсах."""
+    """Real-time marketplace scanning."""
     if not context.args:
         await update.message.reply_text(
             "Как использовать:\n"
@@ -314,8 +225,10 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info(f"Scan command: {query}")
 
     try:
-        reply = await update.message.reply_text(f"⏳ Ищу \"{query}\" на WB, Ozon, Avito... Это займёт ~30 секунд.",
-                                               disable_web_page_preview=True)
+        reply = await update.message.reply_text(
+            f"⏳ Ищу \"{query}\" на WB, Ozon, Avito... Это займёт ~30 секунд.",
+            disable_web_page_preview=True
+        )
     except Exception as e:
         log.error(f"Failed to send loading msg: {e}")
         return
@@ -325,14 +238,13 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not offers:
             if stats.get("error"):
-                await reply.edit_text(f"❌ Ошибка поиска: {stats['error']}\n\nУбедитесь, что на Railway установлен Chromium.")
+                await reply.edit_text(f"❌ Ошибка поиска: {stats['error']}")
             else:
-                await reply.edit_text(f"😕 По запросу «{query}» ничего не найдено.\n\nПопробуйте другой запрос или проверьте правописание.")
+                await reply.edit_text(f"😕 По запросу «{query}» ничего не найдено.\n\nПопробуйте другой запрос.")
             return
 
         message = format_offers_batch(offers)
         await reply.edit_text(message, parse_mode="HTML", disable_web_page_preview=True)
-
         log.info(f"Scan '{query}': found {stats.get('total_found', 0)} offers, sent top 5")
 
     except Exception as e:
@@ -341,7 +253,7 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_deals(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать последние сохранённые сделки."""
+    """Show recent deals from database."""
     db_path = REMINDERS_DB.replace("reminders.db", "deals.db")
     if not os.path.exists(db_path):
         await update.message.reply_text("Пока нет сохранённых находок. Используйте /scan для поиска.")
@@ -399,7 +311,6 @@ async def main():
         if when > datetime.datetime.now():
             scheduler.add_job(send_reminder, 'date', run_date=when, args=[chat_id, text, rid])
 
-    # Periodic auto-scan for popular items
     chat_ids_set = os.environ.get("BOT_CHAT_IDS", "").strip()
     if chat_ids_set:
         scheduler.add_job(_periodic_deal_check, 'interval', minutes=SCAN_INTERVAL_MINUTES,
@@ -415,9 +326,7 @@ async def main():
 
 
 def _periodic_deal_check():
-    """Периодическая проверка популярных категорий."""
     log.info("Periodic check running...")
-    # Можно добавить авто-сканирование популярных категорий
     pass
 
 
