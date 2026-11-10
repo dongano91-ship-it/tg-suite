@@ -11,11 +11,11 @@
     },
     {
       "key": "BOT_TOKEN",
-      "value": ""
+      "value": "9286064431:AAGOzjdgGgad4bv_SpopFbnMGn-V1Z18CkU"
     },
     {
-      "key": "FLASK_PORT",
-      "value": "20129"
+      "key": "BOT_CHAT_IDS",
+      "value": ""
     }
   ]
 }
