@@ -1,5 +1,6 @@
 FROM python:3.12-slim
 
+# Install system dependencies for Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -13,8 +14,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    python -m playwright install chromium 2>/dev/null || true
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers
+RUN python -m playwright install --with-deps chromium 2>&1 || true
 
 COPY app/ ./app/
 COPY Procfile .
