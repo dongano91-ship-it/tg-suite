@@ -178,41 +178,77 @@ def scan_query_real(query: str, max_results: int = 5) -> tuple[list[dict], dict]
     return best, stats
 
 
-def format_offer(offer: dict) -> str:
-    price = f"{int(offer['price']):,}".replace(",", " ") + " ₽"
-    return (
-        f"🛒 <b>{offer.get('platform', '?')}</b>\n"
-        f"<b>{offer.get('title', 'Товар')} → {price}</b>\n"
-        f"<a href=\"{offer['url']}\">Открыть →</a>"
-    )
-
-
 def format_offers_batch(offers: list[dict]) -> str:
+    """Форматирует результаты поиска в красивое сообщение."""
     if not offers:
-        return "😕 Ничего не найдено по этому запросу."
+        return "😕 Ничего не найдено по этому запросу.\n\nПопробуйте другой запрос!"
 
-    lines = ["💰 <b>Лучшие цены:</b>\n"]
-    for i, o in enumerate(offers, 1):
+    lines = ["💰 <b>Лучшие цены на этот товар:</b>\n"]
+
+    for i, o in enumerate(offers[:8], 1):
         price_val = o.get('price', 0)
+        discount = o.get('discount', 0)
+
+        # Форматирование цены
         if price_val:
-            price_str = f"{int(price_val):,}".replace(",", " ") + " ₽"
+            price_str = f"🏷 {int(price_val):,}".replace(",", " ") + " ₽"
+            if discount:
+                old_price = int(price_val / (1 - discount/100)) if discount < 100 else 0
+                if old_price > price_val:
+                    price_str += f" ~~{int(old_price):,}~~ ({discount}% скидка!)"
         else:
             price_str = "—"
 
-        title = o.get('title', 'Товар')[:60]
-        url = o.get('url', '#')
+        # Заголовок и платформа
+        title = o.get('title', 'Товар')[:55]
         platform = o.get('platform', '')
 
-        lines.append(
-            f"<b>{i}. {title}</b>\n"
-            f"Цена: {price_str} | Магазин: {platform}\n"
-            f"🔗 <a href=\"{url}\">Перейти к товару</a>"
-        )
-        if i >= 5:
-            lines.append(f"\n...и ещё {len(offers) - 5} предложений.")
-            break
+        # Причина (почему это хорошая сделка)
+        reason = o.get('reason', '')
+        reason_text = f"\n<i>{reason}</i>" if reason else ""
 
-    return "\n\n".join(lines)
+        # Ссылка
+        url = o.get('url', '#')
+        link_text = "🔗 Перейти" if url and url != '#' else ""
+
+        lines.append(f"<b>{i}. {title}</b>")
+        lines.append(f"{price_str} | 🏪 {platform}{reason_text}")
+        if link_text:
+            lines.append(f"<a href=\"{url}\">{link_text}</a>")
+        lines.append("")  # пустая строка между товарами
+
+    if len(offers) > 8:
+        lines.append(f"...и ещё {len(offers) - 8} предложений на площадках.")
+
+    return "\n".join(lines)
+
+
+def format_offers_with_images(offers: list[dict]) -> tuple[str, list[str]]:
+    """
+    Форматирует результаты с картинками для отправки как фото+текст.
+    Возвращает: (caption_text, list_of_image_urls)
+    """
+    image_urls = []
+    product_infos = []
+
+    for o in offers[:6]:  # Максимум 6 товаров с картинками
+        if o.get('image'):
+            image_urls.append(o['image'])
+
+        price_val = o.get('price', 0)
+        price_str = f"{int(price_val):,}".replace(",", " ") + " ₽" if price_val else "—"
+        discount = o.get('discount', 0)
+
+        info = f"<b>{o.get('title', 'Товар')[:40]}</b>\n"
+        info += f"{price_str}"
+        if discount:
+            info += f" (-{discount}%)"
+        info += f"\n🏪 {o.get('platform', '')}"
+
+        product_infos.append(info)
+
+    caption = "💰 <b>Лучшие цены:</b>\n\n" + "\n\n".join(product_infos)
+    return caption, image_urls
 
 
 # ============================================================
@@ -227,7 +263,7 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/scan iphone 15\n"
             "/scan пылесос dyson\n"
             "/scan кроссовки nike\n\n"
-            "Поиск идёт на Wildberries, Ozon и Авито одновременно."
+            "Ищу на 9 площадках: WB, Ozon, Avito, Яндекс Маркет, М.Видео, DNS, Цитилинк..."
         )
         return
 
@@ -236,7 +272,7 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         reply = await update.message.reply_text(
-            f"⏳ Ищу \"{query}\" на WB, Ozon, Avito... Это займёт ~30 секунд.",
+            f"⏳ Ищу \"{query}\" на 9 маркетплейсах... (~20 сек)",
             disable_web_page_preview=True
         )
     except Exception as e:
@@ -255,7 +291,7 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message = format_offers_batch(offers)
         await reply.edit_text(message, parse_mode="HTML", disable_web_page_preview=True)
-        log.info(f"Scan '{query}': found {stats.get('total_found', 0)} offers, sent top 5")
+        log.info(f"Scan '{query}': found {stats.get('count', 0)} offers")
 
     except Exception as e:
         log.error(f"Scan failed: {e}")
