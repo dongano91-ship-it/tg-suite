@@ -191,12 +191,22 @@ def format_offers_batch(offers: list[dict]) -> str:
     if not offers:
         return "😕 Ничего не найдено по этому запросу."
 
-    lines = ["💰 <b>Лучшие предложения:</b>\n"]
+    lines = ["💰 <b>Лучшие цены:</b>\n"]
     for i, o in enumerate(offers, 1):
-        price = f"{int(o['price']):,}".replace(",", " ") + " ₽"
+        price_val = o.get('price', 0)
+        if price_val:
+            price_str = f"{int(price_val):,}".replace(",", " ") + " ₽"
+        else:
+            price_str = "—"
+
+        title = o.get('title', 'Товар')[:60]
+        url = o.get('url', '#')
+        platform = o.get('platform', '')
+
         lines.append(
-            f"<b>{i}. {o.get('title', 'Товар')} — {price}</b> ({o.get('platform', '')})\n"
-            f"→ <a href=\"{o['url']}\">Ссылка</a>"
+            f"<b>{i}. {title}</b>\n"
+            f"Цена: {price_str} | Магазин: {platform}\n"
+            f"🔗 <a href=\"{url}\">Перейти к товару</a>"
         )
         if i >= 5:
             lines.append(f"\n...и ещё {len(offers) - 5} предложений.")
