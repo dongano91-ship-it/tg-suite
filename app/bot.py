@@ -197,51 +197,67 @@ async def cmd_dealwatch_status(update: Update, context: ContextTypes.DEFAULT_TYP
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Мгновенное сканирование по ключевому слову."""
     if not context.args:
-        await update.message.reply_text("Использование: /scan <ключевое_слово>")
+        await update.message.reply_text("Использование: /scan <ключевое_слово>\n\nДоступные ключи: btc, eth, gold, oil")
         return
 
     keyword = " ".join(context.args).lower()
-    await update.message.reply_text(f"⏳ Сканирую по запросу `{keyword}` ...")
+    log.info(f"Scan command received: keyword={keyword}")
 
-    # Запускаем в фоне
-    asyncio.create_task(run_manual_scan(keyword, context))
+    # Определяем куда слать
+    env_ids = os.environ.get("BOT_CHAT_IDS", "").strip()
+    if env_ids:
+        bot_chat_ids = [int(x.strip()) for x in env_ids.split(",") if x.strip()]
+    else:
+        bot_chat_ids = [update.effective_chat.id]
+    log.info(f"Sending alerts to: {bot_chat_ids}")
 
+    from app.dealwatch import mock_scan, save_deal, log_scan as dl_log
 
-async def run_manual_scan(keyword: str, ctx: ContextTypes.DEFAULT_TYPE):
-    """Выполнить сканирование и отправить уведомления."""
-    from app.dealwatch import mock_scan, save_deal, log_scan
+    try:
+        reply = await update.message.reply_text(f"⏳ Сканирую `{keyword}` ...")
+    except Exception as e:
+        log.error(f"Failed to send loading msg: {e}")
+        await update.message.reply_text("❌ Ошибка отправки сообщения")
+        return
 
-    bot_chat_ids = [int(x) for x in os.environ.get("BOT_CHAT_IDS", "").split(",") if x.strip()]
-    if not bot_chat_ids:
-        bot_chat_ids = [ctx.chat_id]
-
-    raw_deals = mock_scan(keyword)
-    filtered = [d for d in raw_deals if d.get("confidence", 0) >= 0.7]
+    try:
+        raw_deals = mock_scan(keyword)
+        filtered = [d for d in raw_deals if d.get("confidence", 0) >= 0.7]
+    except Exception as e:
+        log.error(f"Mock scan failed: {e}")
+        await reply.edit_text(f"❌ Ошибка сканирования: {e}")
+        return
 
     alerted = 0
     for deal in filtered:
-        deal_id = save_deal(deal)
-        msg = (
-            f"🎯 **Новая возможность**\n\n"
-            f"Объект: `{deal['symbol']}`\n"
-            f"Сигнал: {deal['opportunity']}\n"
-            f"Цена: {deal.get('price', '-')} | Цель: {deal.get('target_price', '-')}"
-        )
-        for chat_id in bot_chat_ids:
-            try:
-                await ctx.bot.send_message(chat_id, msg, parse_mode="Markdown")
-                alerted += 1
-            except Exception as e:
-                log.error(f"Send failed: {e}")
+        try:
+            deal_id = save_deal(deal)
+            msg = (
+                f"🎯 **Новая возможность**\n\n"
+                f"Объект: `{deal['symbol']}`\n"
+                f"Сигнал: {deal['opportunity']}\n"
+                f"Цена: {deal.get('price', '-')} | Цель: {deal.get('target_price', '-')}"
+            )
+            for cid in bot_chat_ids:
+                try:
+                    await ctx.bot.send_message(cid, msg, parse_mode="Markdown")
+                    alerted += 1
+                except Exception as send_err:
+                    log.error(f"Send to {cid} failed: {send_err}")
+        except Exception as e:
+            log.error(f"Save deal failed: {e}")
 
-    log_scan(keyword, len(raw_deals), len(filtered), alerted)
+    dl_log(keyword, len(raw_deals), len(filtered), alerted)
 
-    # Обновляем сообщение
-    status_msg = (
+    status = (
         f"✅ Скан `{keyword}` завершён!\n"
         f"Найдено: {len(raw_deals)} | Отфильтровано: {len(filtered)} | Отправлено: {alerted}"
     )
-    await ctx.message.edit_text(status_msg)
+    try:
+        await reply.edit_text(status)
+    except Exception as e:
+        log.error(f"Edit text failed: {e}")
+        await update.message.reply_text(status)
 
 
 async def resolve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
