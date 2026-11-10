@@ -8,3 +8,7 @@ __pycache__/
 uv.zip
 uv-tools/
 *.exe
+.chrome-profile
+*.log
+__pycache__/
+*.db
