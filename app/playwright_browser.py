@@ -1,6 +1,6 @@
 """
-playwright_browser.py — Реальный парсинг товаров через Playwright.
-Собирает цены, описания и картинки с маркетплейсов.
+playwright_browser.py — Поиск товаров через Playwright.
+Собирает реальные цены, описания и картинки с маркетплейсов.
 """
 from __future__ import annotations
 
@@ -20,9 +20,7 @@ except ImportError:
 
 
 def search_with_playwright(platform: dict, query: str, limit: int = 40) -> tuple[list[dict], dict]:
-    """
-    Ищет товары через Playwright с реальными ценами и картинками.
-    """
+    """Основной поиск через Playwright."""
     if not sync_playwright:
         return [], {"error": "Playwright не установлен"}
 
@@ -32,7 +30,7 @@ def search_with_playwright(platform: dict, query: str, limit: int = 40) -> tuple
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-setuid-sandbox']
             )
 
             context = browser.new_context(
@@ -42,14 +40,14 @@ def search_with_playwright(platform: dict, query: str, limit: int = 40) -> tuple
             )
             page = context.new_page()
 
-            # Wildberries
+            # Пробуем Wildberries
             wb_url = f"https://www.wildberries.ru/catalog/0/search.aspx?search={urllib.parse.quote_plus(query)}"
-            _scrape_wb(page, wb_url, query, products, limit)
+            _scrape_site(page, wb_url, "Wildberries", query, products, limit)
 
-            # Если мало результатов — пробует другие площадки
+            # Если мало результатов, пробуем Ozon
             if len(products) < 2:
                 ozon_url = f"https://www.ozon.ru/search/?text={urllib.parse.quote_plus(query)}"
-                _scrape_ozon(page, ozon_url, query, products, limit)
+                _scrape_site(page, ozon_url, "Ozon", query, products, limit)
 
             browser.close()
 
@@ -63,14 +61,14 @@ def search_with_playwright(platform: dict, query: str, limit: int = 40) -> tuple
         products.extend([
             {"title": f"Wildberries: {query}", "price": 0, "platform": "Wildberries",
              "url": f"https://www.wildberries.ru/catalog/0/search.aspx?search={q}",
-             "is_search": True, "reason": "Смотреть все товары"},
+             "is_search": True, "reason": "Открыть поиск на WB"},
             {"title": f"Ozon: {query}", "price": 0, "platform": "Ozon",
              "url": f"https://www.ozon.ru/search/?text={q}",
-             "is_search": True, "reason": "Смотреть все товары"},
-            {"title": f"Авито: {query}", "price": 0, "platform": "Авито",
+             "is_search": True, "reason": "Открыть поиск на Ozon"},
+            {"title": f"Avito: {query}", "price": 0, "platform": "Avito",
              "url": f"https://www.avito.ru/rossiya?q={q}",
              "is_search": True, "reason": "Б/у и новые товары"},
-            {"title": f"Яндекс Маркет: {query}", "price": 0, "platform": "Яндекс Маркет",
+            {"title": f"Yandex Market: {query}", "price": 0, "platform": "Яндекс Маркет",
              "url": f"https://market.yandex.ru/search?text={q}",
              "is_search": True, "reason": "Сравнение цен"},
         ])
@@ -84,111 +82,86 @@ def search_with_playwright(platform: dict, query: str, limit: int = 40) -> tuple
     return products, stats
 
 
-def _scrape_wb(page, url: str, query: str, products: list, limit: int):
-    """Scrape Wildberries products."""
+def _scrape_site(page, url: str, platform: str, query: str, products: list, limit: int):
+    """Попробовать скрапить сайт с разными селекторами."""
     try:
-        page.goto(url, timeout=25000, wait_until="domcontentloaded")
+        log.info(f"Scraping {platform}...")
+        page.goto(url, timeout=30000, wait_until="networkidle")
         time.sleep(3)
 
-        items = page.evaluate("""() => {
+        # Скроллим для загрузки ленивых изображений
+        for _ in range(2):
+            page.evaluate("window.scrollBy(0, 600)")
+            time.sleep(0.3)
+
+        # JavaScript для извлечения товаров
+        js_code = f"""() => {{
             const results = [];
-            document.querySelectorAll('.product-card, [data-badge]').forEach(card => {
-                const titleEl = card.querySelector('h2, .product-card__title, [class*="Title"]');
-                const priceEl = card.querySelector('.price__price, [class*="Price"]');
-                const imgEl = card.querySelector('img');
-                const linkEl = card.querySelector('a[href*="/detail"]');
+            // Try multiple selector patterns
+            const selectors = [
+                '[data-badge]',
+                '.product-card',
+                '.goods-item',
+                'article',
+                '[class*="ProductCard"]'
+            ];
 
-                if (titleEl && priceEl) {
-                    const title = titleEl.textContent.trim().substring(0, 60);
-                    const priceText = priceEl.textContent.replace(/[^\\d]/g, '');
-                    const price = parseInt(priceText);
+            for (const sel of selectors) {{
+                const cards = document.querySelectorAll(sel);
+                if (cards.length > 0) {{
+                    cards.forEach(card => {{
+                        const titleEl = card.querySelector('h1,h2,h3,[class*=Title],[class*=Name],a[href]');
+                        const priceEl = card.querySelector('[class*=Price],[class*=price],span[itemprop="price"]');
+                        const imgEl = card.querySelector('img[data-src],img[src*="photo"],img[class*=Image]');
+                        const linkEl = card.querySelector('a[href*="/detail"],a[href*="/product"]');
 
-                    if (title && !isNaN(price) && title.length > 5) {
-                        results.push({
-                            title: title,
-                            price: price,
-                            image: imgEl ? (imgEl.src || imgEl.getAttribute('data-src') || '') : '',
-                            url: linkEl ? linkEl.href : ''
-                        });
-                    }
-                }
-            });
-            return results;
-        }""")
+                        if (titleEl && priceEl) {{
+                            const title = (titleEl.textContent || '').trim().substring(0, 60);
+                            const priceText = (priceEl.textContent || '').replace(/[^0-9]/g, '');
+                            const price = parseInt(priceText);
+
+                            if (title.length > 3 && !isNaN(price) && price > 50) {{
+                                results.push({{
+                                    title: title,
+                                    price: price,
+                                    image: imgEl ? (imgEl.getAttribute('data-src') || imgEl.src || '') : '',
+                                    url: linkEl ? linkEl.href : ''
+                                }});
+                            }}
+                        }}
+                    }});
+                    break;
+                }}
+            }}
+            return results.slice(0, {limit});
+        }}"""
+
+        items = page.evaluate(js_code)
 
         if items:
-            for item in items[:limit//2]:
-                products.append({
-                    "title": item["title"],
-                    "description": f"Товар на Wildberries",
-                    "image": item["image"],
-                    "price": item["price"],
-                    "old_price": 0,
-                    "discount": 0,
-                    "platform": "Wildberries",
-                    "url": item["url"],
-                    "rating": 0,
-                    "reason": _gen_reason(item["price"], query)
-                })
-                log.info(f"WB found: {item['title'][:30]}... - {item['price']}₽")
+            for item in items:
+                # Избегаем дубликатов
+                if not any(p.get('url') == item.get('url', '') for p in products):
+                    products.append({
+                        "title": item["title"],
+                        "description": f"Товар на {platform}",
+                        "image": item.get("image", ""),
+                        "price": item.get("price", 0),
+                        "old_price": 0,
+                        "discount": 0,
+                        "platform": platform,
+                        "url": item.get("url", ""),
+                        "rating": 0,
+                        "reason": _gen_reason(item.get("price", 0), query)
+                    })
+            log.info(f"{platform}: found {len(items)} products")
 
     except Exception as e:
-        log.debug(f"WB scrape failed: {e}")
-
-
-def _scrape_ozon(page, url: str, query: str, products: list, limit: int):
-    """Scrape Ozon products."""
-    try:
-        page.goto(url, timeout=25000, wait_until="domcontentloaded")
-        time.sleep(3)
-
-        items = page.evaluate("""() => {
-            const results = [];
-            document.querySelectorAll('[data-kladr-id], .product-card, .offer-card').forEach(card => {
-                const titleEl = card.querySelector('h2, .productName, [class*="Name"]');
-                const priceEl = card.querySelector('.price-value, [class*="Price"]');
-                const imgEl = card.querySelector('img');
-                const linkEl = card.querySelector('a[href*="/product/"]');
-
-                if (titleEl && priceEl) {
-                    const title = titleEl.textContent.trim().substring(0, 60);
-                    const priceText = priceEl.textContent.replace(/[^\\d]/g, '');
-                    const price = parseInt(priceText);
-
-                    if (title && !isNaN(price) && title.length > 5) {
-                        results.push({
-                            title: title,
-                            price: price,
-                            image: imgEl ? (imgEl.src || '') : '',
-                            url: linkEl ? linkEl.href : ''
-                        });
-                    }
-                }
-            });
-            return results;
-        }""")
-
-        if items:
-            for item in items[:limit//2]:
-                products.append({
-                    "title": item["title"],
-                    "description": f"Товар на Ozon",
-                    "image": item["image"],
-                    "price": item["price"],
-                    "old_price": 0,
-                    "discount": 0,
-                    "platform": "Ozon",
-                    "url": item["url"],
-                    "rating": 0,
-                    "reason": _gen_reason(item["price"], query)
-                })
-
-    except Exception as e:
-        log.debug(f"Ozon scrape failed: {e}")
+        log.debug(f"{platform} scrape failed: {e}")
 
 
 def _gen_reason(price: int, query: str) -> str:
-    """Генерирует причину почему это хорошая цена."""
+    """Генерирует объяснение почему цена хороша."""
     thresholds = {
         "iphone": 80000,
         "android": 40000,
@@ -196,8 +169,6 @@ def _gen_reason(price: int, query: str) -> str:
         "nike": 8000,
         "airpods": 20000,
         "playstation": 50000,
-        "xbox": 45000,
-        "samsung": 50000,
     }
 
     for keyword, threshold in thresholds.items():
@@ -207,14 +178,14 @@ def _gen_reason(price: int, query: str) -> str:
             elif price < threshold:
                 return "💰 Хорошая цена по рынку"
             else:
-                return f"📊 Цена {price:,}₽ — проверьте актуальность"
+                return f"📊 Проверьте актуальность цены"
 
     if price < 10000:
         return "✅ Низкая цена"
     elif price < 50000:
         return "📌 Средняя цена"
     else:
-        return f"💵 {price:,}₽"
+        return f"💵 Цена: {price:,} руб"
 
 
 class PlaywrightBrowserError(Exception):
