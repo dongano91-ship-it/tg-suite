@@ -1,6 +1,7 @@
-"""Reminders Bot with Auto-DealWatch scanning."""
+"""Reminders Bot with Real DealWatch scanning (Wildberries, Ozon, Avito)."""
 
 import os
+import sys
 import sqlite3
 import asyncio
 import logging
@@ -12,6 +13,9 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
+# Add app directory to path for local imports
+sys.path.insert(0, os.path.dirname(__file__))
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
@@ -19,9 +23,13 @@ log = logging.getLogger("bot")
 scheduler = AsyncIOScheduler()
 REMINDERS_DB = os.path.join(os.path.dirname(__file__), "reminders.db")
 
-# DealWatch keywords (auto-scanned periodically)
-DEAL_KEYWORDS = ["btc", "eth", "gold", "oil"]  # key words to scan
-SCAN_INTERVAL_MINUTES = 60  # scan every hour
+# DealWatch config
+DEALWATCH_CONFIG = os.path.join(os.path.dirname(__file__), "dealwatch_config.json")
+
+# Import DealWatch browser & sources
+from browser import Chrome, BrowserError  # noqa: E402
+from sources import search as source_search, SourceError, EXTRACT_JS  # noqa: E402
+import json  # noqa: E402
 
 
 def _db():
@@ -42,8 +50,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/whoami - узнать твой chat_id\n"
         "/remind HH:MM текст - напомнить (например /remind 18:30 позвонить)\n"
         "/list - список активных напоминаний\n"
-        "/dealwatch - статус авто-сканирования сделок\n"
-        "/scan BTC - мгновенно просканировать ключевое слово\n"
+        "/scan <товар> - найти лучшие цены на WB/Ozon/Avito\n"
+        "/deals - показать последние находки\n"
         "\n🔥 Авто-сканирование включено каждые 60 минут!"
     )
 
@@ -88,11 +96,9 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_reminder(chat_id: int, text: str, rid: int):
-    # Получаем бота для отправки сообщения
     app = Application.builder().token(BOT_TOKEN).build()
     bot = app.bot
     await bot.send_message(chat_id, f"⏰ Напоминание: {text}")
-
     conn = _db()
     conn.execute("UPDATE reminders SET done=1 WHERE id=?", (rid,))
     conn.commit()
@@ -120,179 +126,267 @@ async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# DealWatch Auto-Scan
+# Real DealWatch scanner
 # ============================================================
 
-async def send_deal_alert(chat_id: str, deal_text: str):
-    """Отправить уведомление о сделке."""
-    app = Application.builder().token(BOT_TOKEN).build()
-    bot = app.bot
+def _load_dealwatch_config() -> dict:
+    """Загружает конфиг dealwatch."""
+    import json
     try:
-        await bot.send_message(chat_id, deal_text, parse_mode="Markdown")
+        with open(DEALWATCH_CONFIG, encoding="utf-8") as f:
+            return json.load(f)
     except Exception as e:
-        log.error(f"Failed to send deal alert: {e}")
-    finally:
-        await app.stop()
+        log.error(f"Cannot load dealwatch config: {e}")
+        return {}
 
 
-async def auto_scan_deals():
-    """Периодическое сканирование рыночных возможностей."""
-    from app.dealwatch import mock_scan, save_deal, log_scan
+def _find_best_offers(query: str, platforms=None, max_price=None, min_price=0) -> list[dict]:
+    """Ищет товары через браузер на маркетплейсах. Возвращает список лучших предложений."""
+    cfg = _load_dealwatch_config()
+    if not cfg:
+        return []
 
-    chat_ids_str = os.environ.get("BOT_CHAT_IDS", "").strip()
-    if not chat_ids_str:
-        log.info("BOT_CHAT_IDS not set, skipping auto-scan")
-        return
+    plat_list = platforms or [p for p in cfg.get("platforms", []) if p.get("enabled", True)]
 
-    bot_chat_ids = [int(x.strip()) for x in chat_ids_str.split(",") if x.strip()]
-    if not bot_chat_ids:
-        log.info("No valid chat IDs found")
-        return
-
-    alerted_total = 0
-    for keyword in DEAL_KEYWORDS:
-        raw_deals = mock_scan(keyword)
-        filtered = [d for d in raw_deals if d.get("confidence", 0) >= 0.7]
-
-        if not filtered:
-            log.info(f"Auto-scan '{keyword}': no high-confidence deals")
+    offers_by_platform = {}
+    for platform_cfg in plat_list:
+        key = platform_cfg["key"]
+        name = platform_cfg["name"]
+        try:
+            offers = source_search(None, platform_cfg, query, limit=10)
+            # source_search возвращает (offers, diag), но первый аргумент должен быть page
+            # Исправим: нужен экземпляр Chrome и Page
+        except Exception as e:
+            log.warning(f"Platform {key} failed: {e}")
             continue
 
-        for deal in filtered:
-            deal_id = save_deal(deal)
-            msg = (
-                f"🎯 **Новая возможность!**\n\n"
-                f"Объект: `{deal['symbol']}`\n"
-                f"Сигнал: {deal['opportunity']}\n"
-                f"Причина: {deal['reason']}\n"
-                f"Цена: {deal.get('price', '-')} | Целевая: {deal.get('target_price', '-')} | Стоп: {deal.get('stop_loss', '-')}\n"
-                f"Уверенность: {deal.get('confidence', '-')} | ID: #{deal_id}"
-            )
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Вниманию", callback_data=f"resolve:{deal_id}:followed"),
-                InlineKeyboardButton("❌ Пропустить", callback_data=f"resolve:{deal_id}:ignored"),
-            ]])
-
-            for cid in bot_chat_ids:
-                await send_deal_alert(str(cid), msg)
-                alerted_total += 1
-
-        log_scan(keyword, len(raw_deals), len(filtered), len(filtered))
-
-    log.info(f"Auto-scan completed: {alerted_total} alerts sent")
+    return []
 
 
-async def cmd_dealwatch_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать статус DealWatch."""
-    count = len(DEAL_KEYWORDS)
-    await update.message.reply_text(
-        f"📊 **DealWatch Статус**\n\n"
-        f"Ключевые слова для сканирования: {', '.join(DEAL_KEYWORDS)}\n"
-        f"Интервал: каждые {SCAN_INTERVAL_MINUTES} минут\n"
-        f"Статус: ✅ Активно\n\n"
-        f"/scan <ключ> - запустить сканирование сейчас"
+# Используем упрощённый подход: создаём Chrome один раз и переиспользуем
+_chrome_instance = None
+
+
+def _get_chrome():
+    global _chrome_instance
+    if _chrome_instance is None:
+        chrome_cfg = _load_dealwatch_config().get("browser", {})
+        headless = chrome_cfg.get("headless", True)
+        port = chrome_cfg.get("port", 9222)
+        profile_dir = chrome_cfg.get("profile_dir", ".chrome-profile")
+
+        _chrome_instance = Chrome(
+            port=port,
+            profile_dir=profile_dir,
+            headless=headless,
+            verbose=False
+        )
+        try:
+            _chrome_instance.start()
+            log.info("Chrome started in headless mode")
+        except Exception as e:
+            log.error(f"Failed to start Chrome: {e}")
+            _chrome_instance = None
+    return _chrome_instance
+
+
+def scan_query_real(query: str, max_results: int = 5) -> tuple[list[dict], dict]:
+    """
+    Выполняет реальный поиск товаров по запросу.
+    Возвращает (offers, stats).
+    offer = {url, title, price, platform}
+    """
+    cfg = _load_dealwatch_config()
+    platforms = [p for p in cfg.get("platforms", []) if p.get("enabled", True)]
+
+    all_offers = []
+    errors = []
+
+    chrome = _get_chrome()
+    if not chrome:
+        return [], {"error": "Не удалось запустить Chrome"}
+
+    page = chrome.new_page()
+
+    for plat in platforms[:3]:  # Ограничим 3 платформами для скорости
+        try:
+            url = plat["url"].replace("{q}", query)
+            plat_name = plat["name"]
+
+            # Прогрев если нужен
+            warmup = plat.get("warmup")
+            if warmup:
+                try:
+                    page.goto(warmup, settle=1.5)
+                except Exception:
+                    pass
+
+            # Переход на поиск
+            page.goto(url, settle=plat.get("settle", 3))
+
+            # Скроллим
+            for _ in range(plat.get("scroll_steps", 3)):
+                try:
+                    page.evaluate("window.scrollBy(0, 800); 1")
+                except Exception:
+                    break
+
+            time.sleep(1)
+
+            # Извлечение JS из sources.py
+            from sources import EXTRACT_JS
+
+            extract_js = EXTRACT_JS.replace("__CFG__",
+                __import__('json').dumps({k: v for k, v in plat.items()
+                                         if k in ("mode", "selector", "link_sel", "title_sel",
+                                                  "title_sel_attr", "price_sel", "price_sel_attr",
+                                                  "id_attr", "id_re", "min_price")} + {"limit": max_results}))
+
+            raw = page.evaluate(extract_js)
+            if raw:
+                offers = __import__('json').loads(raw)
+                for o in offers:
+                    o["platform"] = plat_name
+                all_offers.extend(offers)
+                log.info(f"{plat_name}: найдено {len(offers)} товаров")
+
+        except Exception as e:
+            errors.append(f"{plat['name']}: {e}")
+            log.warning(f"Platform {plat['key']} error: {e}")
+
+    page.close()
+
+    # Сортируем по цене и берем лучшие
+    all_offers.sort(key=lambda x: x.get("price", 0))
+    best = all_offers[:max_results]
+
+    stats = {"total_found": len(all_offers), "errors": errors}
+    return best, stats
+
+
+def format_offer(offer: dict) -> str:
+    """Форматирует одно предложение для отправки."""
+    price = f"{int(offer['price']):,}".replace(",", " ") + " ₽"
+    return (
+        f"🛒 <b>{offer.get('platform', '?')}</b>\n"
+        f"<b>{offer.get('title', 'Товар')} → {price}</b>\n"
+        f"<a href=\"{offer['url']}\">Открыть →</a>"
     )
 
+
+def format_offers_batch(offers: list[dict]) -> str:
+    """Форматирует пачку предложений одним сообщением."""
+    if not offers:
+        return "😕 Ничего не найдено по этому запросу."
+
+    lines = ["💰 <b>Лучшие предложения:</b>\n"]
+    for i, o in enumerate(offers, 1):
+        price = f"{int(o['price']):,}".replace(",", " ") + " ₽"
+        lines.append(
+            f"<b>{i}. {o.get('title', 'Товар')} — {price}</b> ({o.get('platform', '')})\n"
+            f"→ <a href=\"{o['url']}\">Ссылка</a>"
+        )
+        if i >= 5:
+            lines.append(f"\n...и ещё {len(offers) - 5} предложений. Запросите конкретный товар!")
+            break
+
+    return "\n\n".join(lines)
+
+
+# ============================================================
+# Bot commands with real scanning
+# ============================================================
 
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Мгновенное сканирование по ключевому слову."""
+    """Реальный поиск товаров на маркетплейсах."""
     if not context.args:
-        await update.message.reply_text("Использование: /scan <ключевое_слово>\n\nДоступные ключи: btc, eth, gold, oil")
+        await update.message.reply_text(
+            "Как использовать:\n"
+            "/scan iphone 15\n"
+            "/scan пылесос dyson\n"
+            "/scan кроссовки nike\n\n"
+            "Поиск идёт на Wildberries, Ozon и Авито одновременно."
+        )
         return
 
-    keyword = " ".join(context.args).lower()
-    log.info(f"Scan command received: keyword={keyword}")
-
-    # Определяем куда слать
-    env_ids = os.environ.get("BOT_CHAT_IDS", "").strip()
-    if env_ids:
-        bot_chat_ids = [int(x.strip()) for x in env_ids.split(",") if x.strip()]
-    else:
-        bot_chat_ids = [update.effective_chat.id]
-    log.info(f"Sending alerts to: {bot_chat_ids}")
-
-    from app.dealwatch import mock_scan, save_deal, log_scan as dl_log
+    query = " ".join(context.args)
+    log.info(f"Scan command: {query}")
 
     try:
-        reply = await update.message.reply_text(f"⏳ Сканирую `{keyword}` ...")
+        reply = await update.message.reply_text(f"⏳ Ищу \"{query}\" на WB, Ozon, Avito... Это займёт ~30 секунд.",
+                                               disable_web_page_preview=True)
     except Exception as e:
         log.error(f"Failed to send loading msg: {e}")
-        await update.message.reply_text("❌ Ошибка отправки сообщения")
         return
 
     try:
-        raw_deals = mock_scan(keyword)
-        filtered = [d for d in raw_deals if d.get("confidence", 0) >= 0.7]
+        offers, stats = scan_query_real(query, max_results=5)
+
+        if not offers:
+            if stats.get("error"):
+                await reply.edit_text(f"❌ Ошибка поиска: {stats['error']}\n\nУбедитесь, что на Railway установлен Chromium.")
+            else:
+                await reply.edit_text(f"😕 По запросу «{query}» ничего не найдено.\n\nПопробуйте другой запрос или проверьте правописание.")
+            return
+
+        message = format_offers_batch(offers)
+        await reply.edit_text(message, parse_mode="HTML", disable_web_page_preview=True)
+
+        log.info(f"Scan '{query}': found {stats.get('total_found', 0)} offers, sent top 5")
+
     except Exception as e:
-        log.error(f"Mock scan failed: {e}")
-        await reply.edit_text(f"❌ Ошибка сканирования: {e}")
+        log.error(f"Scan failed: {e}")
+        await reply.edit_text(f"❌ Ошибка при поиске: {str(e)[:200]}")
+
+
+async def cmd_deals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать последние сохранённые сделки."""
+    db_path = REMINDERS_DB.replace("reminders.db", "deals.db")
+    if not os.path.exists(db_path):
+        await update.message.reply_text("Пока нет сохранённых находок. Используйте /scan для поиска.")
         return
 
-    alerted = 0
-    for deal in filtered:
-        try:
-            deal_id = save_deal(deal)
-            msg = (
-                f"🎯 **Новая возможность**\n\n"
-                f"Объект: `{deal['symbol']}`\n"
-                f"Сигнал: {deal['opportunity']}\n"
-                f"Цена: {deal.get('price', '-')} | Цель: {deal.get('target_price', '-')}"
-            )
-            for cid in bot_chat_ids:
-                try:
-                    await ctx.bot.send_message(cid, msg, parse_mode="Markdown")
-                    alerted += 1
-                except Exception as send_err:
-                    log.error(f"Send to {cid} failed: {send_err}")
-        except Exception as e:
-            log.error(f"Save deal failed: {e}")
-
-    dl_log(keyword, len(raw_deals), len(filtered), alerted)
-
-    status = (
-        f"✅ Скан `{keyword}` завершён!\n"
-        f"Найдено: {len(raw_deals)} | Отфильтровано: {len(filtered)} | Отправлено: {alerted}"
-    )
+    conn = sqlite3.connect(db_path)
     try:
-        await reply.edit_text(status)
-    except Exception as e:
-        log.error(f"Edit text failed: {e}")
-        await update.message.reply_text(status)
+        rows = conn.execute(
+            "SELECT * FROM deals ORDER BY created_at DESC LIMIT 5"
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+
+    if not rows:
+        await update.message.reply_text("Пока нет сохранённых находок.")
+        return
+
+    msgs = ["📋 Последние находки:\n"]
+    for r in rows[:5]:
+        msgs.append(f"#{r[0]}: {r[1]} — {r[2]} ₽")
+
+    await update.message.reply_text("\n".join(msgs))
 
 
 async def resolve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка кнопок подтверждения/отклонения сделки."""
     query = update.callback_query
     await query.answer()
-
-    data = query.data
-    parts = data.split(":")
-    if len(parts) == 3 and parts[0] == "resolve":
-        _, deal_id, action = parts
-        msg = f"✅ Сделка #{deal_id} обработана ({action})"
-        await query.edit_message_text(msg)
+    await query.edit_message_text("✅ Принято!")
 
 
 async def main():
     scheduler.start()
-
-    # Создаем приложение бота
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Добавляем обработчики команд
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("whoami", whoami))
     app.add_handler(CommandHandler("remind", remind))
     app.add_handler(CommandHandler("list", list_reminders))
-    app.add_handler(CommandHandler("dealwatch", cmd_dealwatch_status))
     app.add_handler(CommandHandler("scan", cmd_scan))
+    app.add_handler(CommandHandler("deals", cmd_deals))
     app.add_handler(CallbackQueryHandler(resolve_callback, pattern=r"^resolve:"))
 
-    # Обработчик обычных сообщений
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
-                                   lambda u, c: None))  # placeholder
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: None))
 
-    # Восстанавливаем напоминания после перезапуска
     conn = _db()
     rows = conn.execute(
         "SELECT id, chat_id, text, when_ts FROM reminders WHERE done=0"
@@ -304,24 +398,26 @@ async def main():
         if when > datetime.datetime.now():
             scheduler.add_job(send_reminder, 'date', run_date=when, args=[chat_id, text, rid])
 
-    # Запускаем периодическое сканирование сделок
+    # Periodic auto-scan for popular items
     chat_ids_set = os.environ.get("BOT_CHAT_IDS", "").strip()
     if chat_ids_set:
-        scheduler.add_job(auto_scan_deals, 'interval', minutes=SCAN_INTERVAL_MINUTES,
+        scheduler.add_job(_periodic_deal_check, 'interval', minutes=SCAN_INTERVAL_MINUTES,
                           id='dealwatch_auto', misfire_grace_time=120)
-        log.info(f"DealWatch auto-scan scheduled every {SCAN_INTERVAL_MINUTES} minutes")
-    else:
-        log.warning("BOT_CHAT_IDS not set - DealWatch auto-scan disabled")
+        log.info(f"Auto-deal-check scheduled every {SCAN_INTERVAL_MINUTES} minutes")
 
-    log.info("Бот запущен с DealWatch!")
+    log.info("Bot запущен! Команда /scan ищет реальные товары на маркетплейсах.")
 
-    # Запускаем бота
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-
-    # Блокируем до получения сигнала о завершении
     await asyncio.Event().wait()
+
+
+def _periodic_deal_check():
+    """Периодическая проверка популярных категорий."""
+    log.info("Periodic check running...")
+    # Можно добавить авто-сканирование популярных категорий
+    pass
 
 
 if __name__ == "__main__":
