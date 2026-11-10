@@ -22,6 +22,7 @@ log = logging.getLogger("bot")
 
 scheduler = AsyncIOScheduler()
 REMINDERS_DB = os.path.join(os.path.dirname(__file__), "reminders.db")
+SCAN_INTERVAL_MINUTES = 60  # auto-scan every hour
 
 # DealWatch config
 DEALWATCH_CONFIG = os.path.join(os.path.dirname(__file__), "dealwatch_config.json")
