@@ -291,9 +291,8 @@ async def main():
     # Запускаем периодическое сканирование сделок
     chat_ids_set = os.environ.get("BOT_CHAT_IDS", "").strip()
     if chat_ids_set:
-        cron_expr = f'*/{SCAN_INTERVAL_MINUTES} * * * *'  # каждые N минут
-        scheduler.add_job(auto_scan_deals, 'cron', minute='*/' + str(SCAN_INTERVAL_MINUTES),
-                          id='dealwatch_auto', misfire_grace_time=60)
+        scheduler.add_job(auto_scan_deals, 'interval', minutes=SCAN_INTERVAL_MINUTES,
+                          id='dealwatch_auto', misfire_grace_time=120)
         log.info(f"DealWatch auto-scan scheduled every {SCAN_INTERVAL_MINUTES} minutes")
     else:
         log.warning("BOT_CHAT_IDS not set - DealWatch auto-scan disabled")
